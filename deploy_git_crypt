@@ -1,0 +1,148 @@
+#!/bin/bash
+
+# Copyright 2013, Ryan Feng
+# This file is released under BSD 3-Clause license, please read LICENSE file for more details.
+
+# Settings and switches
+PASS=''
+SALT=''
+PATTERN_FILE=''
+
+ATTRIBUTE_FILE=''
+ATTRIBUTES="* filter=encrypted diff=encrypted
+[merge]
+    renormalize=true"
+
+CLEAN_SCRIPT="_GIT_FILENAME='%f' _git_crypt_filter clean"
+SMUDGE_SCRIPT="_GIT_FILENAME='%f' _git_crypt_filter smudge"
+DIFF_SCRIPT="_GIT_FILENAME='%f' _git_crypt_filter diff"
+
+GLOBAL_CONFIG_PARAMETER=''
+# ===============================================================================
+
+checkAlreadySetup(){
+        if [ -n "`grep -s 'filter\s*=\s*\"\?encrypted\"\?' $@`" ];then
+            return 0
+        else
+            return 1
+        fi
+}
+
+checkGitRepo(){
+    if [ ! -e './.git' ];then
+        echo "Not in a git repo or not in the root of the working directory" > /dev/stderr
+        exit 1
+    else
+        checkAlreadySetup .gitattributes .git/info/attributes && {
+            echo "You've already setup git encryption for this repo"
+            exit 0
+        }
+    fi
+}
+
+askPatternFile(){
+    DEFAULT_PATTERN_FILE='./.gitcrypt'
+    read -p "Specify a pattern file name, it's the file contains all file path patterns need to be encrypted[default: $DEFAULT_PATTERN_FILE]: " PATTERN_FILE
+    PATTERN_FILE=${PATTERN_FILE:-$DEFAULT_PATTERN_FILE}
+    touch $PATTERN_FILE
+    echo "# All files are encrypted
+*" > $PATTERN_FILE
+    git config encrypt.patternFile "$PATTERN_FILE"
+}
+
+askGlobal(){
+    read -p "Do you want to make the git encryption settings(like password and salt) global? Be aware that password and salt will be in plaintext and stored in ~/.gitconfig, they are stored in './.git/config'. if you make them global and all local repos will share the same password and salt. If you are not sure please answer no, this will ONLY affect the current local repo.[yN]" USE_GLOBAL_CONFIG
+    case $USE_GLOBAL_CONFIG in
+        [Yy]*)
+            GLOBAL_CONFIG_PARAMETER='--global'
+            ;;
+        *)
+            ;;
+    esac
+}
+
+genSalt(){
+    echo "Generating salt..."
+    SALT=`xxd -l 8 -p /dev/urandom`
+    git config $GLOBAL_CONFIG_PARAMETER encrypt.salt "$SALT"
+}
+
+askPass(){
+    if [ -n "`git config --get encrypt.pass`" ];then
+        return
+    fi
+    read -p "You don't have a password yet, do you want to generate it now? Answer no to manually input one[Yn]: "
+    case $REPLY in
+        [Nn]*)
+            read -p "Enter the password for encrypting your files: " PASS
+            ;;
+            *)
+            echo 'Generating password...'
+            PASS=`xxd -l 30 -p /dev/urandom`
+            ;;
+    esac
+
+    git config $GLOBAL_CONFIG_PARAMETER encrypt.pass "$PASS"
+}
+
+askAtteibuteFile(){
+    OPT=(".gitattributes" ".git/info/attributes")
+    echo "Where do you want to put your attribute settings?"
+    select ATTRIBUTE_FILE in ${OPT[@]};
+    do
+        break
+    done
+    # Write attributes
+    TMP=/tmp/$$.tmp
+    echo "$ATTRIBUTES" > $TMP
+    if [ -r "$ATTRIBUTE_FILE" ]; then
+        cat $TMP $ATTRIBUTE_FILE > $ATTRIBUTE_FILE.t
+        mv $ATTRIBUTE_FILE{.t,}
+    else
+        cp $TMP $ATTRIBUTE_FILE
+    fi
+    rm $TMP
+}
+
+setFilters(){
+    echo "Writing filter configs..."
+    git config $GLOBAL_CONFIG_PARAMETER filter.encrypted.smudge "$SMUDGE_SCRIPT"
+    git config $GLOBAL_CONFIG_PARAMETER filter.encrypted.clean  "$CLEAN_SCRIPT"
+    git config $GLOBAL_CONFIG_PARAMETER diff.encrypted.textconv "$DIFF_SCRIPT"
+}
+
+STEP=1
+TOTALSTEP=4
+nextStep(){
+    echo -n "Step $STEP of $TOTALSTEP: "
+    STEP=$(($STEP+1))
+}
+
+cleanFilters(){
+    echo "Clean all encryption settings..."
+    rm -f `git config --get encrypt.patternFile`
+    git config --remove-section encrypt &>/dev/null
+    git config --remove-section filter.encrypted &>/dev/null
+    git config --remove-section diff.encrypted.textconv &>/dev/null
+}
+
+main(){
+    if [ "$1" = "clean" ];then
+        cleanFilters
+        exit 0
+    fi
+    checkGitRepo
+    nextStep
+    askGlobal
+    genSalt
+    nextStep
+    askPass
+    nextStep
+    askPatternFile
+    nextStep
+    askAtteibuteFile
+    setFilters
+}
+
+# Main procedure
+main $@

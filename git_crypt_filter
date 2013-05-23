@@ -1,0 +1,84 @@
+#!/bin/sh
+# Copyright 2013, Ryan Feng
+# This file is released under BSD 3-Clause license, please read LICENSE file for more details.
+
+SALT=`git config --get encrypt.salt`
+PASS=`git config --get encrypt.pass`
+
+PATTERN_FILE=`git config --get encrypt.patternFile`
+NAME_MATCHED=0
+
+getSaltPass(){
+    if [ -z "$SALT" -o -z "$PASS" ];then
+        SALT=`getpwd git_crypt_salt`
+        PASS=`getpwd git_crypt_pass`
+    fi
+}
+
+match_pattern(){
+    if [ -r "$PATTERN_FILE" ];then
+        `fnmatch "$_GIT_FILENAME" "$PATTERN_FILE"`
+        r=$?
+        if [ -n "$_GIT_FILENAME" -a $r -eq 0 ];then
+            NAME_MATCHED=1
+        fi
+    fi
+}
+
+check_fnmatch(){
+    if [ ! -x `which fnmatch` ];then
+        echo "Cannot find script fnmatch or it's not executable, using default filter..." > /dev/stderr
+        return 1
+    fi
+}
+
+encrypt(){
+    openssl enc -base64 -aes-256-ecb -S "$SALT" -k "$PASS"
+}
+
+decrypt(){
+    openssl enc -d -base64 -aes-256-ecb -k "$PASS" 2>/dev/null || cat
+}
+
+clean_filter(){
+    if [ $NAME_MATCHED -eq 1 ];then
+        encrypt
+    else
+        cat
+    fi
+}
+
+smudge_filter(){
+    if [ $NAME_MATCHED -eq 1 ];then
+        decrypt
+    else
+        cat
+    fi
+}
+
+diff_filter(){
+    if [ $NAME_MATCHED -eq 1 ];then
+        openssl enc -d base64 -aes-256-ecb -k "$PASS" -in "$1" 2>/dev/null || cat "$1"
+    else
+        cat "$1"
+    fi
+}
+
+main(){
+    check_fnmatch
+    getSaltPass
+    match_pattern
+    cmd=$1
+    shift 1
+    case $cmd in
+        smudge) smudge_filter $@;;
+          diff) diff_filter $@;;
+         clean) clean_filter $@;;
+       encrypt) encrypt;;
+       decrypt) decrypt;;
+             *) echo "Unknown command $cmd, not using filter" > /dev/stderr;;
+    esac
+}
+
+# Main procedure
+main $@
