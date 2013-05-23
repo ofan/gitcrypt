@@ -1,0 +1,27 @@
+#!/usr/bin/env python
+
+# This script takes two parameters, the first is the filename needs to be matched,
+# the second is the file contains glob patterns.One pattern per line.
+
+import fnmatch
+import sys
+
+def check_match(f, fn):
+    with open(f) as fpattern:
+        for pat in fpattern.xreadlines():
+            pat = pat.strip()
+            # Ignore comments
+            if pat.startswith('#'):
+                continue
+            if fnmatch.fnmatch(fn, pat):
+                return True
+    return False
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("Usage: %s <filename> <pattern file>" % sys.argv[0])
+    else:
+        if check_match(sys.argv[2], sys.argv[1]):
+            exit(0)
+        else:
+            exit(1)
